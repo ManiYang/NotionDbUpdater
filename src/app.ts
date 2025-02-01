@@ -6,9 +6,10 @@ import { appConfig } from "../app-config"
 import { ItemTypeSetting } from "./app-config-types"
 import { DbRecord, PropertyValue, DbRecordsMap } from "./types";
 import { InputItem, funcReadInputFile, getDbRecordFromInputItem } from "./input-file"
-import { notion, getColumnDataTypesOfDb, dumpDb } from "./notion-databases"
+import { notion, getDatabaseInfo, dumpDb } from "./notion-databases"
 import { plainTextToTitleValue, convertToNotionPropertyValue } from "./utilities/notion-api-util"
 import { setsDifference, setsIntersection } from "./utilities/sets-util"
+
 
 function haveTheSameNonRelationPropertiesAndValues(record1: DbRecord, record2: DbRecord): boolean {
     const properties1: {[key: string]: PropertyValue} = record1.properties;
@@ -36,8 +37,10 @@ function haveTheSameNonRelationPropertiesAndValues(record1: DbRecord, record2: D
  * @returns is successful?
  */
 async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Promise<boolean> {
+    console.log(`---- item type: ${itemTypeSetting.itemType} ----`)
+    
     // read input file
-    console.log(`reading input file ${itemTypeSetting.inputFile.fileName}`)
+    console.log(`reading input file "${itemTypeSetting.inputFile.fileName}"`)
     const inputFilePath: string = path.join(
         appConfig.inputFileDir, itemTypeSetting.inputFile.fileName);
     const inputData: Array<InputItem> | null = await funcReadInputFile(inputFilePath);
@@ -60,7 +63,9 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
     }
 
     // get DB's column names and types
-    const columnNameToType: {[key: string]: string} = await getColumnDataTypesOfDb(
+    console.log("getting database info");
+
+    const [dbTitle, columnNameToType] = await getDatabaseInfo(
         itemTypeSetting.notionDatabase.databaseID);
 
     let propertiesOfSelectType: Set<string> = new Set();
@@ -74,6 +79,8 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
     }
 
     // dump DB 
+    console.log(`querying database "${dbTitle}"`);
+
     const oldDbData: DbRecordsMap | null = await dumpDb(
         itemTypeSetting.notionDatabase, itemTypeSetting.propertyNames, itemTypeSetting.relations); 
     if (oldDbData === null)
@@ -166,7 +173,6 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
         // set pageId
         newDbData[itemId].pageId = pageId;
     }
-
 
     return true;
 }

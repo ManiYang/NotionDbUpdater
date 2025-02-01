@@ -10,13 +10,24 @@ export const notion = new Client({
 });
 
 
-export async function getColumnDataTypesOfDb(dbId: string): Promise<{[key: string]: string}> {
+/**
+ * @param dbId 
+ * @returns (db-title, property-name-to-type)
+ */
+export async function getDatabaseInfo(
+    dbId: string
+): Promise<[string, {[key: string]: string}]> {
     const response = await notion.databases.retrieve({ database_id: dbId });
 
-    let result: {[key: string]: string} = {};
+    let dbTitle: string = "";
+    for (const richTextObj of response.title) 
+        dbTitle += richTextObj.plain_text;
+
+
+    let propertyNameToType: {[key: string]: string} = {};
     for (const propertyName in response.properties) 
-        result[propertyName] = response.properties[propertyName].type;
-    return result;
+        propertyNameToType[propertyName] = response.properties[propertyName].type;
+    return [dbTitle, propertyNameToType];
 }
 
 
