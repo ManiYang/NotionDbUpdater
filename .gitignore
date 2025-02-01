@@ -1,3 +1,6 @@
+data/
+app-config.ts
+
 # Logs
 logs
 *.log
