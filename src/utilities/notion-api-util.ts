@@ -1,4 +1,4 @@
-const assert = require("assert")
+import assert = require("assert")
 
 import { PropertyValue } from "../types";
 

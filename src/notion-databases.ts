@@ -1,14 +1,8 @@
-const { Client } = require("@notionhq/client");
-require("dotenv").config();
-
 import { NotionDatabaseSetting, RelationSetting } from "./app-config-types";
-import { interpretNotionPropertyValue, interpretNotionRelationValue } from "./utilities/notion-api-util"
+import { interpretNotionPropertyValue, interpretNotionRelationValue } 
+    from "./utilities/notion-api-util";
 import { DbRecord, PropertyValue, RelationValue, DbRecordsMap } from "./types";
-
-export const notion = new Client({
-    auth: process.env.NOTION_TOKEN,
-});
-
+import { getNotionClient } from "./notion-client"
 
 /**
  * @param dbId 
@@ -17,7 +11,7 @@ export const notion = new Client({
 export async function getDatabaseInfo(
     dbId: string
 ): Promise<[string, {[key: string]: string}]> {
-    const response = await notion.databases.retrieve({ database_id: dbId });
+    const response = await getNotionClient().databases.retrieve({ database_id: dbId });
 
     let dbTitle: string = "";
     for (const richTextObj of response.title) 
@@ -36,7 +30,7 @@ export async function dumpDb(
     propertyNames: Array<string>,
     relationsSetting: Array<RelationSetting>
 ): Promise<DbRecordsMap | null> {
-    const queryResponse = await notion.databases.query({
+    const queryResponse = await getNotionClient().databases.query({
         database_id: notionDbSetting.databaseID
     });
 

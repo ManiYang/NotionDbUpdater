@@ -1,13 +1,17 @@
-const assert = require("assert")
-const path = require("path");
+import assert = require("assert");
+require("dotenv").config();
+import { Client } from "@notionhq/client";
+import path = require("path");
 
-import { appConfig } from "../app-config"
-import { ItemTypeSetting } from "./app-config-types"
+import { AppConfig, ItemTypeSetting } from "./app-config-types"
 import { DbRecord, PropertyValue, DbRecordsMap, RelationValue } from "./types";
 import { InputItem, funcReadInputFile, getDbRecordFromInputItem } from "./input-file"
-import { notion, getDatabaseInfo, dumpDb } from "./notion-databases"
+import { getDatabaseInfo, dumpDb } from "./notion-databases"
 import { plainTextToTitleValue, convertToNotionPropertyValue } from "./utilities/notion-api-util"
 import { setsDifference, setsIntersection, setsAreEqual } from "./utilities/sets-util"
+import { setNotionClient, getNotionClient } from "./notion-client"
+
+import { projectLifeRemindersConfig } from "../projects/life_reminders_config"
 
 
 function haveTheSameNonRelationPropertiesAndValues(
@@ -70,17 +74,18 @@ function haveTheSameRelationPropertiesAndValues(
 
 
 /**
- * @param itemTypeSetting 
  * @returns (old-DB-Data, new-DB-data), or null if failed
  */
 async function updateNonRelationProperties(
-    itemTypeSetting: ItemTypeSetting): Promise<[DbRecordsMap, DbRecordsMap] | null> {
+    inputFileDir: string,
+    itemTypeSetting: ItemTypeSetting
+): Promise<[DbRecordsMap, DbRecordsMap] | null> {
     console.log(`---- item type: ${itemTypeSetting.itemType} ----`)
     
     // read input file
     console.log(`reading input file "${itemTypeSetting.inputFile.fileName}"`)
     const inputFilePath: string = path.join(
-        appConfig.inputFileDir, itemTypeSetting.inputFile.fileName);
+        inputFileDir, itemTypeSetting.inputFile.fileName);
     const inputData: Array<InputItem> | null = await funcReadInputFile(inputFilePath);
     if (inputData === null)
         return null;
@@ -156,7 +161,7 @@ async function updateNonRelationProperties(
 
         console.log(
             `create page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
-        const response = await notion.pages.create({
+        const response = await getNotionClient().pages.create({
             parent: {
                 "database_id": itemTypeSetting.notionDatabase.databaseID
             },
@@ -180,7 +185,7 @@ async function updateNonRelationProperties(
 
         console.log(
             `move page to trash: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
-        await notion.pages.update({
+        await getNotionClient().pages.update({
             page_id: pageId,
             in_trash: true
         });
@@ -203,7 +208,7 @@ async function updateNonRelationProperties(
 
         console.log(
             `update page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
-        await notion.pages.update({
+        await getNotionClient().pages.update({
             page_id: pageId,
             properties: {
                 Name: plainTextToTitleValue(record.pageName),
@@ -304,7 +309,7 @@ async function updateRelationProperties(
         console.log(
             `update page: itemId=${itemId}, pageName=\"${newDbData[itemId].pageName}\"`);
         const pageId: string = newDbData[itemId].pageId;
-        await notion.pages.update({
+        await getNotionClient().pages.update({
             page_id: pageId,
             properties: notionPropertiesValue
         })
@@ -314,13 +319,45 @@ async function updateRelationProperties(
 }
 
 
+//====
+
+
 async function main(): Promise<number> {
+    // projects & configs
+    const projectNameToConfig: {[key: string]: AppConfig} = {
+        "life_reminders": projectLifeRemindersConfig
+    }
+
+    // -- get project name from argument
+    const project: string | undefined = process.argv[2];
+
+    const projectNameList: string = Object.keys(projectNameToConfig).join(", ");
+
+    if (project === undefined) {
+        console.error(`Please specify project name (${projectNameList})`);
+        return 1;
+    }
+    if (!(project in projectNameToConfig)) {
+        console.error(`Project name must be one of [${projectNameList}]`);
+        return 1;
+    }
+
+    // -- 
+    const appConfig: AppConfig = projectNameToConfig[project];
+
+    //
+    const notion = new Client({
+        auth: process.env[appConfig.notionTokenName],
+    });
+    setNotionClient(notion);
+
     // read input data and update DB for non-relation properties
     console.log("==== update non-relation properties ====");
 
     let itemTypeToData: {[key: string]: OldAndNewDbData} = {}
     for (const itemTypeSetting of appConfig.itemTypes) {
-        const result = await updateNonRelationProperties(itemTypeSetting);
+        const result = await updateNonRelationProperties(
+            appConfig.inputFileDir, itemTypeSetting);
         if (result === null) 
             return 1;
 

@@ -25,6 +25,7 @@ export type ItemTypeSetting = {
 }
 
 export type AppConfig = {
+    notionTokenName: string,
     inputFileDir: string,
     itemTypes: Array<ItemTypeSetting>
 }
