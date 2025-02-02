@@ -1,5 +1,7 @@
 data/
 app-config.ts
+secret/
+projects/
 
 # Logs
 logs

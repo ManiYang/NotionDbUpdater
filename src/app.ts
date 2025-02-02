@@ -1,17 +1,17 @@
 const assert = require("assert")
-
 const path = require("path");
 
 import { appConfig } from "../app-config"
 import { ItemTypeSetting } from "./app-config-types"
-import { DbRecord, PropertyValue, DbRecordsMap } from "./types";
+import { DbRecord, PropertyValue, DbRecordsMap, RelationValue } from "./types";
 import { InputItem, funcReadInputFile, getDbRecordFromInputItem } from "./input-file"
 import { notion, getDatabaseInfo, dumpDb } from "./notion-databases"
 import { plainTextToTitleValue, convertToNotionPropertyValue } from "./utilities/notion-api-util"
-import { setsDifference, setsIntersection } from "./utilities/sets-util"
+import { setsDifference, setsIntersection, setsAreEqual } from "./utilities/sets-util"
 
 
-function haveTheSameNonRelationPropertiesAndValues(record1: DbRecord, record2: DbRecord): boolean {
+function haveTheSameNonRelationPropertiesAndValues(
+        record1: DbRecord, record2: DbRecord): boolean {
     const properties1: {[key: string]: PropertyValue} = record1.properties;
     const properties2: {[key: string]: PropertyValue} = record2.properties;
 
@@ -32,11 +32,49 @@ function haveTheSameNonRelationPropertiesAndValues(record1: DbRecord, record2: D
 }
 
 
+function haveTheSameRelationPropertiesAndValues(
+        record1: DbRecord, record2: DbRecord): boolean {
+    const properties1: {[key: string]: Array<RelationValue>} = record1.relationProperties;
+    const properties2: {[key: string]: Array<RelationValue>} = record2.relationProperties;
+
+    if (Object.keys(properties1).length !== Object.keys(properties2).length)
+        return false;
+
+    for (const propertyName in properties1) {
+        if (!(propertyName in properties2))
+            return false;
+    }
+
+    for (const propertyName in properties1) {
+        let pageIds1: Set<string> = new Set();
+        for (const value of properties1[propertyName]) {
+            assert(value.pageId !== undefined);
+            pageIds1.add(value.pageId);
+        }
+
+        let pageIds2: Set<string> = new Set();
+        for (const value of properties2[propertyName]) {
+            assert(value.pageId !== undefined);
+            pageIds2.add(value.pageId);
+        }
+
+        if (!setsAreEqual(pageIds1, pageIds2))
+            return false;
+    }
+
+    return true;
+}
+
+
+//====
+
+
 /**
  * @param itemTypeSetting 
- * @returns is successful?
+ * @returns (old-DB-Data, new-DB-data), or null if failed
  */
-async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Promise<boolean> {
+async function updateNonRelationProperties(
+    itemTypeSetting: ItemTypeSetting): Promise<[DbRecordsMap, DbRecordsMap] | null> {
     console.log(`---- item type: ${itemTypeSetting.itemType} ----`)
     
     // read input file
@@ -45,7 +83,7 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
         appConfig.inputFileDir, itemTypeSetting.inputFile.fileName);
     const inputData: Array<InputItem> | null = await funcReadInputFile(inputFilePath);
     if (inputData === null)
-        return false;
+        return null;
 
     // convert input data to DB records (without pageId)
     let newDbData: DbRecordsMap = {};
@@ -57,7 +95,7 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
             itemTypeSetting.relations
         );
         if (record === null) 
-            return false;
+            return null;
 
         newDbData[record.itemId] = record;
     }
@@ -72,7 +110,7 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
     for (const propertyName of itemTypeSetting.propertyNames) {
         if (!(propertyName in columnNameToType)) {
             console.error(`column \"${propertyName}\" not found in DB`);
-            return false;
+            return null;
         }
         if (columnNameToType[propertyName] === "select")
             propertiesOfSelectType.add(propertyName);
@@ -94,12 +132,15 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
     const itemIdsToCreate = setsDifference(newItemIds, oldItemIds);
 
     let itemIdsToUpdate: Set<string> = new Set();
+    let itemIdsNoChangeNeeded: Set<string> = new Set();
     const commonItemIds = setsIntersection(oldItemIds, newItemIds);
     for (const itemId of commonItemIds) {
         if (oldDbData[itemId].pageName !== newDbData[itemId].pageName) 
             itemIdsToUpdate.add(itemId);
         else if (!haveTheSameNonRelationPropertiesAndValues(oldDbData[itemId], newDbData[itemId]))
             itemIdsToUpdate.add(itemId);
+        else
+            itemIdsNoChangeNeeded.add(itemId);
     }
 
     // create pages
@@ -174,13 +215,124 @@ async function updateNonRelationProperties(itemTypeSetting: ItemTypeSetting): Pr
         newDbData[itemId].pageId = pageId;
     }
 
+    //
+    for (const itemId of itemIdsNoChangeNeeded) {
+        // set pageId
+        newDbData[itemId].pageId = oldDbData[itemId].pageId;
+    }
+
+    return [oldDbData, newDbData];
+}
+
+
+//====
+
+
+type OldAndNewDbData = {
+    oldDbData: DbRecordsMap,
+    newDbData: DbRecordsMap
+}
+
+
+async function updateRelationProperties(
+    itemTypeSetting: ItemTypeSetting, 
+    itemTypeToData: {[key: string]: OldAndNewDbData}
+): Promise<boolean> {
+    console.log(`---- item type: ${itemTypeSetting.itemType} ----`)
+
+    const currentItemType: string = itemTypeSetting.itemType;
+    const { oldDbData, newDbData } = itemTypeToData[currentItemType];
+
+    // fill in pageId of values of relation properties in newDbData
+    for (const relationSetting of itemTypeSetting.relations) {
+        const propertyName: string = relationSetting.propertyName;
+
+        //
+        if (!(relationSetting.targetItemType in itemTypeToData)) {
+            console.error(
+                `input data do not contain item-type ${relationSetting.targetItemType}, `
+                + "which is used as the target item-type of a relation");
+            return false;
+        }
+        const dataOfTargetItemType: DbRecordsMap 
+            = itemTypeToData[relationSetting.targetItemType].newDbData;
+
+        //
+        for (const itemId in newDbData) {
+            const relationValues: Array<RelationValue> 
+                = newDbData[itemId].relationProperties[propertyName]
+
+            for (const value of relationValues) {
+                assert(value.itemId !== undefined);
+                if (!(value.itemId in dataOfTargetItemType)) {
+                    console.error(
+                        `could not find item of type ${relationSetting.targetItemType} ` 
+                        + `with ID ${value.itemId}`);
+                }
+                const pageId = dataOfTargetItemType[value.itemId].pageId;
+                assert(pageId !== undefined);
+                value.pageId = pageId;
+            }
+        }
+    }
+
+    // determine pages to update
+    let itemIdsToUpdate: Set<string> = new Set();
+    for (const itemId in newDbData) {
+        if (!(itemId in oldDbData)) 
+            itemIdsToUpdate.add(itemId);
+        else if (!haveTheSameRelationPropertiesAndValues(newDbData[itemId], oldDbData[itemId])) 
+            itemIdsToUpdate.add(itemId);
+    }
+
+    // update pages
+    for (const itemId of itemIdsToUpdate) {
+        let notionPropertiesValue = {};
+        for (const propertyName in newDbData[itemId].relationProperties) {
+
+            const relationValues: Array<RelationValue> 
+                = newDbData[itemId].relationProperties[propertyName];
+
+            let notionRelationArray = [];
+            for (const value of relationValues) 
+                notionRelationArray.push({ id: value.pageId });
+
+            notionPropertiesValue[propertyName] = { relation: notionRelationArray };
+        }
+
+        //
+        console.log(
+            `update page: itemId=${itemId}, pageName=\"${newDbData[itemId].pageName}\"`);
+        const pageId: string = newDbData[itemId].pageId;
+        await notion.pages.update({
+            page_id: pageId,
+            properties: notionPropertiesValue
+        })
+    }
+
     return true;
 }
 
 
 async function main(): Promise<number> {
+    // read input data and update DB for non-relation properties
+    console.log("==== update non-relation properties ====");
+
+    let itemTypeToData: {[key: string]: OldAndNewDbData} = {}
     for (const itemTypeSetting of appConfig.itemTypes) {
-        const ok: boolean = await updateNonRelationProperties(itemTypeSetting);
+        const result = await updateNonRelationProperties(itemTypeSetting);
+        if (result === null) 
+            return 1;
+
+        const [oldDbData, newDbData] = result;
+        itemTypeToData[itemTypeSetting.itemType] = { oldDbData, newDbData }
+    }
+
+    // update DB for relation properties
+    console.log("\n==== update relation properties ====");
+
+    for (const itemTypeSetting of appConfig.itemTypes) {
+        const ok = await updateRelationProperties(itemTypeSetting, itemTypeToData);
         if (!ok) 
             return 1;
     }

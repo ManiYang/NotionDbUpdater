@@ -23,3 +23,15 @@ export function setsUnion(setA: Set<any>, setB: Set<any>): Set<any> {
         result.add(item);
     return result;
 }
+
+export function setsAreEqual(setA: Set<any>, setB: Set<any>): boolean {
+    if (setA.size !== setB.size)
+        return false;
+
+    for (const item of setA) {
+        if (!setB.has(item))
+            return false;
+    }
+
+    return true;
+}
