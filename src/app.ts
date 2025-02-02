@@ -160,7 +160,7 @@ async function updateNonRelationProperties(
         }
 
         console.log(
-            `create page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
+            `+ create page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
         const response = await getNotionClient().pages.create({
             parent: {
                 "database_id": itemTypeSetting.notionDatabase.databaseID
@@ -184,7 +184,7 @@ async function updateNonRelationProperties(
         assert(pageId !== undefined);
 
         console.log(
-            `move page to trash: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
+            `+ move page to trash: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
         await getNotionClient().pages.update({
             page_id: pageId,
             in_trash: true
@@ -207,7 +207,7 @@ async function updateNonRelationProperties(
         }
 
         console.log(
-            `update page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
+            `+ update page: itemId=${record.itemId}, pageName=\"${record.pageName}\"`);
         await getNotionClient().pages.update({
             page_id: pageId,
             properties: {
@@ -244,6 +244,9 @@ async function updateRelationProperties(
     itemTypeToData: {[key: string]: OldAndNewDbData}
 ): Promise<boolean> {
     console.log(`---- item type: ${itemTypeSetting.itemType} ----`)
+
+    if (itemTypeSetting.relations.length === 0) // no relation property
+        return true;
 
     const currentItemType: string = itemTypeSetting.itemType;
     const { oldDbData, newDbData } = itemTypeToData[currentItemType];
@@ -307,7 +310,7 @@ async function updateRelationProperties(
 
         //
         console.log(
-            `update page: itemId=${itemId}, pageName=\"${newDbData[itemId].pageName}\"`);
+            `+ update page: itemId=${itemId}, pageName=\"${newDbData[itemId].pageName}\"`);
         const pageId: string = newDbData[itemId].pageId;
         await getNotionClient().pages.update({
             page_id: pageId,
